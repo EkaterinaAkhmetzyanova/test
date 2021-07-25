@@ -1,158 +1,132 @@
 const http = require('http');
-const port = process.env.PORT || 8080;
-const fs = require('fs')
 const Koa = require('koa');
 const koaBody = require('koa-body');
 const app = new Koa();
-const path = require('path');
-let lastTicketId = null;
+const uuid = require('uuid');
 
 app.use(koaBody({
-    urlencoded: true,
-    multipart: true
+  text: true,
+  urlencoded: true,
+  multipart: true,
+  json: true,
 }));
 
-app.use(async(ctx, next) => {
-    ctx.response.set({'Access-Control-Allow-Origin':'*'});
-    ctx.response.set({'Access-Control-Allow-Methods': '*'});
+const port = process.env.PORT || 7070;
+const server = http.createServer(app.callback()).listen(port)
+
+app.use(async (ctx, next) => {
+  const origin = ctx.request.get('Origin');
+  if (!origin) {
     return await next();
-});
+  }
+  const headers = { 'Access-Control-Allow-Origin': '*', };
 
-app.use(async(ctx) => {
-    let {method} = ctx.request.query;
-    method ? method : method = ctx.request.body.method;
-    
-
-    switch (method) {
-        case 'allTickets':
-            const allTicketsResponse = new Promise((resolve, reject) => {
-                fs.readFile(path.join(__dirname,'public', 'ticket.json'), (err, data) => {
-                    if (err) {
-                        reject(err);
-                      return
-                    }
-                    
-                    resolve(data); 
-                }); 
-            });
-
-            return allTicketsResponse.then(
-                (result) => ctx.response.body = result,
-                (err) => console.error('ошибка чтения ticket.json', err)
-            );
-        
-        case 'ticketById':
-            const {id} = ctx.request.query;
-            const fullDescResponse = new Promise((resolve, reject) => {
-                fs.readFile(path.join(__dirname,'public', 'ticket.json'), (err, data) => {
-                    if (err) {
-                        reject(err);
-                      return
-                    }
-                    
-                    data = JSON.parse(data)
-                    const fullDescTicketID = data.findIndex(ticket => ticket.id == id);
-                    const fullDesc = data[fullDescTicketID].full;
-                    data = JSON.stringify(fullDesc);  
-                 
-                    resolve(data); 
-                }); 
-            });
-
-            return ticketById.then(
-                (result) => ctx.response.body = result,
-                (err) => console.error('ошибка чтения ticket.json', err)
-            );
-          
-        case 'createTicket':
-            if(!lastTicketId) {
-                ctx.request.body.id = 1;
-                lastTicketId = 1;
-            } else {
-                lastTicketId += 1;
-                ctx.request.body.id = lastTicketId;
-            }
-         
-            fs.readFile(path.join(__dirname,'public', 'ticket.json'), (err, data) => {
-                if (err) {
-                  console.error(err)
-                  return
-                }
-
-                if(data.length) {
-                    data = JSON.parse(data)
-                    data.push(ctx.request.body)
-                    data = JSON.stringify(data);
-                } else {
-                    data = JSON.stringify([ctx.request.body]);
-                }
-
-                fs.writeFile(path.join(__dirname, 'public', 'ticket.json'), data, (err) => {
-                    if (err) {
-                        console.error(err);
-                        return;
-                    }
-                });
-            });
-           
-            ctx.response.body = lastTicketId;
-
-            return;
-            
-        case 'deleteTicket':
-            fs.readFile(path.join(__dirname,'public', 'ticket.json'), (err, data) => {
-                if (err) {
-                  console.error(err)
-                  return
-                }
-
-                data = JSON.parse(data)
-                const deleteTicketID = data.findIndex(ticket => ticket.id == ctx.request.body.id);
-                data.splice(deleteTicketID, 1);
-                data = JSON.stringify(data);                   
-               
-                fs.writeFile(path.join(__dirname, 'public', 'ticket.json'), data, (err) => {
-                    if (err) {
-                        console.error(err);
-                        return;
-                    }
-                });
-            });
-            
-            ctx.response.body = 'ticket deleted';
-
-            return;
-
-        case 'editTicket':
-            fs.readFile(path.join(__dirname,'public', 'ticket.json'), (err, data) => {
-                if (err) {
-                    console.error(err)
-                    return
-                }
-
-                data = JSON.parse(data)
-                const editTicketID = data.findIndex(ticket => ticket.id == ctx.request.body.id);
-                const editedTicket = {...data[editTicketID], ...ctx.request.body}
-                data.splice(editTicketID, 1, editedTicket);
-                data = JSON.stringify(data);                   
-                
-                fs.writeFile(path.join(__dirname, 'public', 'ticket.json'), data, (err) => {
-                    if (err) {
-                        console.error(err);
-                        return;
-                    }
-                });
-            });
-            
-            ctx.response.body = 'ticket edit';
-
-            return;                             
-        
-        default:
-            ctx.response.body = 'сервер работает';
-            
-            return;
+  if (ctx.request.method !== 'OPTIONS') {
+    ctx.response.set({...headers});
+    try {
+      return await next();
+    } catch (e) {
+      e.headers = {...e.headers, ...headers};
+      throw e;
     }
+  }
+
+  if (ctx.request.get('Access-Control-Request-Method')) {
+    ctx.response.set({
+      ...headers,
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH',
+    });
+
+    if (ctx.request.get('Access-Control-Request-Headers')) {
+      ctx.response.set('Access-Control-Allow-Headers', ctx.request.get('Access-Control-Request-Headers'));
+    }
+    ctx.response.status = 204;
+  }
 });
 
-http.createServer(app.callback()).listen(port);
+const tickets = [];
+
+class Tickets {
+  constructor(id, name, description, status, created) {
+    this.id = id;
+    this.name = name;
+    this.description = description;
+    this.status = status;
+    this.created = created;
+  }
+}
+
+const exampleTicket = new Tickets(uuid.v4(), 'Поменять краску', 'Поменять краску в принтере, ком 404', false, new Date());
+tickets.push(exampleTicket);
+
+app.use(async ctx => {
+  // GET
+  if (ctx.method === 'GET') {
+    const { method } = ctx.request.query;
+    switch (method) {
+      case 'allTickets':
+        ctx.response.body = tickets.map((item) => {
+          return {
+            id: item.id,
+            name: item.name,
+            status: item.status,
+            created: item.created,
+          };
+        });
+        return;
+      case 'ticketById':
+        const { id } = ctx.request.query;
+        if (id) {
+          const ticket = tickets.find(item => item.id == id);
+          if (ticket) {
+            ctx.response.body = ticket;
+          } else {
+            ctx.response.status = 404;
+          }
+        }
+        return;
+      default: 
+        ctx.response.status = 404;
+        return;
+    }
+  }
+
+  // POST
+  if (ctx.method === 'POST') {
+    const { name, description } = ctx.request.body;
+    const id = uuid.v4();
+    const created = new Date();
+    tickets.push(new Tickets(id, name, description, false, created));
+    ctx.response.body = tickets;
+    return;
+  };
+
+  // PUT
+  if (ctx.method === 'PUT') {
+    const { id, name, description } = ctx.request.body;
+    const index = tickets.findIndex((item) => item.id === id);
+    tickets[index].name = name;
+    tickets[index].description = description;
+    ctx.response.body = 'ok';
+    return;
+  }
+
+  // PATCH
+  if (ctx.method === 'PATCH') {
+    const { id, status } = ctx.request.query;
+    const index = tickets.findIndex((item) => item.id === id);
+    tickets[index].status = status;
+    ctx.response.body = 'ok';
+    return;
+  }
+
+  // DELETE
+  if (ctx.method === 'DELETE') {
+    const { id } = ctx.request.query;
+    // tickets = tickets.filter((item) => item.id !== id);
+    const foundIndex = tickets.findIndex((item) => item.id === id);
+    tickets.splice(foundIndex, 1);
+    ctx.response.body = 'ok';
+    return;
+  }
+});
